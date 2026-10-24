@@ -217,16 +217,45 @@ def bili_bvid(url: str) -> str | None:
         return None
 
 
+COOKIE_BROWSERS = ("safari", "chrome", "edge", "firefox", "brave")
+COOKIE_CACHE: dict[str, dict] = {}
+COOKIE_RESOLVED: list[str] = []
+
+
+def _load_browser_cookies(browser: str, domain: str) -> dict:
+    from yt_dlp.cookies import extract_cookies_from_browser
+    jar = extract_cookies_from_browser(browser)
+    return {c.name: c.value for c in jar if domain in (c.domain or "")}
+
+
 def bili_cookies(browser: str | None) -> dict:
+    """读浏览器登录态；只读一次。--cookie-browser auto 会依次试几个浏览器。"""
     if not browser:
         return {}
-    try:
-        from yt_dlp.cookies import extract_cookies_from_browser
-        jar = extract_cookies_from_browser(browser)
-        return {c.name: c.value for c in jar if "bilibili" in (c.domain or "")}
-    except Exception as e:
-        info(f"  （读取 {browser} cookie 失败：{type(e).__name__}，改走匿名请求）")
-        return {}
+    if browser in COOKIE_CACHE:
+        return COOKIE_CACHE[browser]
+
+    names = COOKIE_BROWSERS if browser == "auto" else (browser,)
+    for name in names:
+        try:
+            jar = _load_browser_cookies(name, "bilibili")
+        except Exception as exc:
+            if browser != "auto":
+                info(f"  （读取 {name} cookie 失败：{type(exc).__name__}，改走匿名请求）")
+                info("    需要登录态的话，去 系统设置 → 隐私与安全性 → 完全磁盘访问权限 "
+                     "把终端加进去")
+            continue
+        if jar:
+            info(f"  （已读取 {name} 登录态，{len(jar)} 条 bilibili cookie）")
+            COOKIE_CACHE[browser] = jar
+            COOKIE_RESOLVED.append(name)
+            return jar
+        if browser != "auto":
+            info(f"  （{name} 里没有 bilibili 登录态，确认已在该浏览器登录 B 站）")
+    if browser == "auto":
+        info("  （没找到可用的浏览器登录态，改走匿名请求）")
+    COOKIE_CACHE[browser] = {}
+    return {}
 
 
 def bili_api(path: str, params: dict, cookies: dict) -> dict:
@@ -798,7 +827,12 @@ def transcribe(path: Path, args) -> tuple[list, str]:
 def transcribe_faster_whisper(path: Path, args) -> tuple[list, str]:
     if args.hf_mirror:
         os.environ.setdefault("HF_ENDPOINT", args.hf_mirror)
-    info(f"  引擎 faster-whisper · 模型 {args.asr_model}（首次运行会自动下载）…")
+    sizes = {"tiny": "75 MB", "base": "145 MB", "small": "484 MB",
+             "medium": "1.5 GB", "large-v3": "3 GB"}
+    hint = sizes.get(args.asr_model, "视模型而定")
+    info(f"  引擎 faster-whisper · 模型 {args.asr_model}（约 {hint}，首次运行需下载，之后复用）")
+    if not args.hf_mirror:
+        info("    下载慢/卡住就加：--hf-mirror https://hf-mirror.com  别按 Ctrl-C")
     from faster_whisper import WhisperModel
 
     model = WhisperModel(args.asr_model, device="auto", compute_type="int8")
@@ -808,13 +842,17 @@ def transcribe_faster_whisper(path: Path, args) -> tuple[list, str]:
     info(f"  识别语言 {info_obj.language}"
          f"（置信度 {getattr(info_obj, 'language_probability', 0):.2f}）")
     cues, n = [], 0
-    for seg in segments:
-        n += 1
-        text = clean_text(seg.text or "")
-        if text:
-            cues.append((int(seg.start * 1000), int(seg.end * 1000), text))
-        if n % 25 == 0:
-            info(f"    已转写 {ts(int(seg.end * 1000))} …")
+    try:
+        for seg in segments:
+            n += 1
+            text = clean_text(seg.text or "")
+            if text:
+                cues.append((int(seg.start * 1000), int(seg.end * 1000), text))
+            if n % 25 == 0:
+                info(f"    已转写 {ts(int(seg.end * 1000))} …")
+    except KeyboardInterrupt:
+        info(f"  转写被中断（已完成 {n} 段，未写入结果）")
+        raise
     return cues, f"语音转写（faster-whisper · {args.asr_model}）"
 
 
@@ -868,6 +906,9 @@ def bili_download_audio(bvid: str, cid: int, cookie_browser: str | None,
     url = best.get("baseUrl") or best.get("base_url")
     outdir.mkdir(parents=True, exist_ok=True)
     dest = outdir / "audio.m4a"
+    if dest.exists() and dest.stat().st_size > 10_000:
+        info("  （复用已下载的音轨）")
+        return dest
     headers = {"User-Agent": BILI_UA, "Referer": f"https://www.bilibili.com/video/{bvid}"}
     if cookies:
         headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
@@ -1181,8 +1222,9 @@ def main(argv=None) -> int:
     ap.add_argument("--out", default=str(HERE / "out"), help="输出目录")
     ap.add_argument("--max-chars", type=int, default=12000, help="单次调用喂多少字")
     ap.add_argument("--timeout", type=int, default=600, help="单次调用超时秒数")
-    ap.add_argument("--cookie-browser", default=None,
-                    help="浏览器登录态，如 safari / chrome / edge")
+    ap.add_argument("--cookie-browser", default=None, metavar="BROWSER",
+                    help="浏览器登录态：safari / chrome / edge / firefox / brave，"
+                         "或 auto（依次尝试）")
     ap.add_argument("--yes", "-y", action="store_true", help="不问直接跑")
     ap.add_argument("--force", action="store_true", help="忽略分块缓存重跑")
     ap.add_argument("--asr", choices=("auto", "faster-whisper", "whisper-cpp", "none"),
@@ -1225,4 +1267,9 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print("\n已中断（Ctrl-C）。已下载的模型、音轨和中间笔记都保留，重跑会接着用。",
+              file=sys.stderr)
+        sys.exit(130)
