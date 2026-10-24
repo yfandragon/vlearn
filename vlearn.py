@@ -25,7 +25,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 HERE = Path(__file__).resolve().parent
 UA = (
@@ -176,9 +176,26 @@ def pick_subtitle(meta: dict):
     return None, None, []
 
 
-def fetch_url(url: str, timeout: int = 60) -> str:
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+def open_url(url: str, headers: dict | None = None, timeout: int = 60):
+    """urllib 在 Python 3.9 不跟 308 重定向，这里手动跟，并在每一跳补回请求头。"""
+    hdrs = {"User-Agent": UA}
+    if headers:
+        hdrs.update(headers)
+    for _ in range(6):
+        req = urllib.request.Request(url, headers=hdrs)
+        try:
+            return urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError as exc:
+            location = exc.headers.get("Location") if exc.headers else None
+            if exc.code in (301, 302, 303, 307, 308) and location:
+                url = urllib.parse.urljoin(url, location)
+                continue
+            raise
+    raise RuntimeError(f"重定向次数过多：{url}")
+
+
+def fetch_url(url: str, timeout: int = 60, headers: dict | None = None) -> str:
+    with open_url(url, headers=headers, timeout=timeout) as resp:
         return resp.read().decode("utf-8", "replace")
 
 
@@ -228,8 +245,17 @@ def _load_browser_cookies(browser: str, domain: str) -> dict:
     return {c.name: c.value for c in jar if domain in (c.domain or "")}
 
 
+SESSDATA = os.environ.get("BILI_SESSDATA", "")
+
+
 def bili_cookies(browser: str | None) -> dict:
-    """读浏览器登录态；只读一次。--cookie-browser auto 会依次试几个浏览器。"""
+    """读浏览器登录态；只读一次。--cookie-browser auto 会依次试几个浏览器。
+    优先用 --bili-sessdata 给的值（不需要任何系统授权）。"""
+    if SESSDATA:
+        if "sessdata" not in COOKIE_CACHE:
+            info("  （使用手动填写的 SESSDATA）")
+            COOKIE_CACHE["sessdata"] = {"SESSDATA": SESSDATA}
+        return COOKIE_CACHE["sessdata"]
     if not browser:
         return {}
     if browser in COOKIE_CACHE:
@@ -817,6 +843,49 @@ def pick_asr_backend(args) -> str:
            else "whisper.cpp 或模型缺失"))
 
 
+WHISPER_FILES = ("config.json", "model.bin", "tokenizer.json", "vocabulary.txt")
+
+
+def model_cache_root() -> Path:
+    return Path(os.environ.get("VLEARN_MODEL_DIR") or (Path.home() / ".cache" / "vlearn" / "models"))
+
+
+def download_model_direct(size: str, endpoint: str, dest: Path) -> Path:
+    """不经 Hub 协议，直接 GET 模型文件——镜像站通常只支持这种下载。"""
+    base = f"{endpoint.rstrip('/')}/Systran/faster-whisper-{size}/resolve/main"
+    dest.mkdir(parents=True, exist_ok=True)
+    for name in WHISPER_FILES:
+        target = dest / name
+        if target.exists() and target.stat().st_size > 0:
+            continue
+        url = f"{base}/{name}"
+        info(f"    下载 {name} …")
+        tmp = target.with_suffix(target.suffix + ".part")
+        with open_url(url, timeout=120) as resp, open(tmp, "wb") as fh:
+            shutil.copyfileobj(resp, fh)
+        if tmp.stat().st_size == 0:
+            die(f"下载 {name} 得到 0 字节，检查 {endpoint} 是否可用")
+        tmp.rename(target)
+    missing = [n for n in WHISPER_FILES if not (dest / n).exists()]
+    if missing:
+        die("模型文件不完整，缺：" + ", ".join(missing))
+    return dest
+
+
+def resolve_whisper_model(args) -> str:
+    """返回可以直接交给 WhisperModel 的值：本地目录优先，其次模型名。"""
+    given = Path(args.asr_model).expanduser()
+    if given.is_dir():
+        return str(given)                       # 用户自己指定的模型目录
+    local = model_cache_root() / f"faster-whisper-{args.asr_model}"
+    if (local / "model.bin").exists():
+        return str(local)
+    if args.hf_mirror:
+        info(f"  从镜像下载模型到 {local} …")
+        return str(download_model_direct(args.asr_model, args.hf_mirror, local))
+    return args.asr_model
+
+
 def transcribe(path: Path, args) -> tuple[list, str]:
     backend = pick_asr_backend(args)
     if backend == "faster-whisper":
@@ -827,6 +896,8 @@ def transcribe(path: Path, args) -> tuple[list, str]:
 def transcribe_faster_whisper(path: Path, args) -> tuple[list, str]:
     if args.hf_mirror:
         os.environ.setdefault("HF_ENDPOINT", args.hf_mirror)
+        # 镜像站基本不支持 Xet 传输，不禁用会报 FileMetadataError
+        os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
     sizes = {"tiny": "75 MB", "base": "145 MB", "small": "484 MB",
              "medium": "1.5 GB", "large-v3": "3 GB"}
     hint = sizes.get(args.asr_model, "视模型而定")
@@ -835,7 +906,19 @@ def transcribe_faster_whisper(path: Path, args) -> tuple[list, str]:
         info("    下载慢/卡住就加：--hf-mirror https://hf-mirror.com  别按 Ctrl-C")
     from faster_whisper import WhisperModel
 
-    model = WhisperModel(args.asr_model, device="auto", compute_type="int8")
+    model_arg = resolve_whisper_model(args)
+    try:
+        model = WhisperModel(model_arg, device="auto", compute_type="int8")
+    except Exception as exc:
+        if model_arg != args.asr_model:
+            raise
+        die(
+            f"模型加载失败：{type(exc).__name__}: {str(exc)[:160]}\n\n"
+            "这是下载环节的问题，不是代码问题。三种解法任选：\n"
+            f"  1) 走镜像直连下载：加 --hf-mirror https://hf-mirror.com\n"
+            f"  2) 指定已经下好的模型目录：--asr-model /path/to/faster-whisper-{args.asr_model}\n"
+            "  3) 换个不需要下载的小模型先验证：--asr-model tiny"
+        )
     lang = None if args.asr_language == "auto" else args.asr_language
     segments, info_obj = model.transcribe(str(path), language=lang,
                                           vad_filter=True, beam_size=5)
@@ -913,8 +996,7 @@ def bili_download_audio(bvid: str, cid: int, cookie_browser: str | None,
     if cookies:
         headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
     info(f"  API 音轨 {best.get('id')} · {int((best.get('bandwidth') or 0) / 1000)} kbps")
-    req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=120) as resp, open(dest, "wb") as fh:
+    with open_url(url, headers=headers, timeout=120) as resp, open(dest, "wb") as fh:
         shutil.copyfileobj(resp, fh)
     if dest.stat().st_size < 10_000:
         raise RuntimeError(f"音轨文件过小（{dest.stat().st_size} 字节）")
@@ -1199,6 +1281,14 @@ def cmd_doctor(args):
     return 0 if ok else 1
 
 
+def cmd_web(args) -> int:
+    try:
+        import webui
+    except ImportError as exc:
+        die(f"缺少 webui.py（{exc}）：它必须和 vlearn.py 放在同一目录")
+    return webui.serve(host=args.host, port=args.port, open_browser=args.open)
+
+
 def cmd_sub(url: str, args) -> int:
     meta, paras, sub_note, vid = prepare(url, args)
     out_dir = Path(args.out).expanduser() / vid
@@ -1213,7 +1303,8 @@ def main(argv=None) -> int:
     ensure_venv()
     ap = argparse.ArgumentParser(
         prog="vlearn", description="视频链接 → 带时间戳的中文笔记（用 opencode Go 额度总结）")
-    ap.add_argument("target", nargs="?", help="视频链接，或 doctor / sub <链接>")
+    ap.add_argument("target", nargs="?",
+                    help="视频链接 / BV 号 / 本地文件，或 doctor / sub / web")
     ap.add_argument("extra", nargs="*", help=argparse.SUPPRESS)
     ap.add_argument("--backend", choices=("opencode", "codex"), default="opencode",
                     help="opencode=用 Go 订阅额度；codex=用 ChatGPT 订阅额度")
@@ -1235,10 +1326,19 @@ def main(argv=None) -> int:
     ap.add_argument("--asr-language", default="auto", help="音频语言：auto / zh / en …")
     ap.add_argument("--hf-mirror", default=None,
                     help="HuggingFace 镜像，例如 https://hf-mirror.com")
+    ap.add_argument("--bili-sessdata", default=None, metavar="SESSDATA",
+                    help="B 站登录态的 SESSDATA 值（F12 → Application → Cookies 里复制），"
+                         "这样不需要给终端任何系统权限")
     ap.add_argument("--version", action="version", version=f"vlearn {__version__}")
     ap.add_argument("--ping", action=argparse.BooleanOptionalAction, default=True,
                     help="doctor 时实测一次额度（默认开）")
+    ap.add_argument("--host", default="127.0.0.1", help="web 服务监听地址")
+    ap.add_argument("--port", type=int, default=8765, help="web 服务端口，默认 8765")
+    ap.add_argument("--open", action=argparse.BooleanOptionalAction, default=True,
+                    help="web 启动后自动打开浏览器（默认开）")
     args = ap.parse_args(argv)
+    if getattr(args, "bili_sessdata", None):
+        globals()["SESSDATA"] = args.bili_sessdata.strip()
     if args.backend == "opencode":
         args.model = args.model or DEFAULT_MODEL
 
@@ -1247,6 +1347,8 @@ def main(argv=None) -> int:
         return 2
     if args.target == "doctor":
         return cmd_doctor(args)
+    if args.target == "web":
+        return cmd_web(args)
     if args.target == "sub":
         url = args.extra[0] if args.extra else None
         if not url:
@@ -1254,8 +1356,8 @@ def main(argv=None) -> int:
         return cmd_sub(url, args)
     args.target = normalize_target(args.target)
     if not is_url(args.target) and not local_media(args.target):
-        ap.error(f"既不是链接也不是存在的文件：{args.target}"
-                 "（要视频链接 / 本地文件 / doctor / sub）")
+        die(f"既不是链接也不是存在的文件：{args.target}\n"
+            "  用法：vlearn.py <视频链接 | BV 号 | 本地文件>  或 doctor / sub / web")
 
     try:
         out = run_summarize(args.target, args)

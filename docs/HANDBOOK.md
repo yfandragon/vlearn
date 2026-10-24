@@ -151,7 +151,23 @@ vlearn 自检
 | `python3 vlearn.py sub <目标>` | 只出字幕，不总结 | 不花 |
 | `python3 vlearn.py <目标>` | 完整笔记 | 1~N 次 |
 
-### 3.2 五个典型场景
+### 3.2 网页界面（不想用命令行时）
+
+```bash
+python3 vlearn.py web                 # 默认 http://127.0.0.1:8765，自动开浏览器
+python3 vlearn.py web --port 9000 --no-open
+```
+
+界面里能做的事和命令行一一对应：粘贴链接 / BV 号 / 本地路径、选后端与模型、选语音识别模型、
+填 SESSDATA、勾选镜像下载，点「开始」后实时看日志，完成后直接渲染出 `notes.md`。
+
+实现上它只是一个壳：`webui.py` 用标准库起 HTTP 服务，把 `vlearn.py <target>` 当子进程跑，
+把 stdout 用 SSE 推到浏览器。所以**命令行能跑通的，界面一定能跑通**；界面报错时，先回到命令行
+用同样的参数跑一遍，日志更完整。
+
+`vlearn web` 不会替你填参数，界面里没勾的东西等于命令行没传。
+
+### 3.3 五个典型场景
 
 **场景 1：YouTube 有字幕（最常见）**
 
@@ -215,7 +231,7 @@ python3 vlearn.py sub "URL 或 本地文件"
 cat out/<id>/transcript.md
 ```
 
-### 3.3 参数速查
+### 3.4 参数速查
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
@@ -228,7 +244,11 @@ cat out/<id>/transcript.md
 | `--asr-model` | `small` | faster-whisper 模型名，或 whisper.cpp 的 ggml 路径 |
 | `--asr-language` | `auto` | 强制语言能省时间、提准确率 |
 | `--hf-mirror` | 无 | 例如 `https://hf-mirror.com` |
-| `--cookie-browser` | 无 | `safari` / `chrome` / `edge` |
+| `--cookie-browser` | 无 | `safari` / `chrome` / `edge` / `auto` |
+| `--bili-sessdata` | 无 | B 站 SESSDATA，免系统授权 |
+| `--hf-mirror` | 无 | 模型走镜像下载 |
+| `--host/--port` | `127.0.0.1` / `8765` | `web` 子命令的监听地址与端口 |
+| `--open/--no-open` | 开 | `web` 启动后是否自动开浏览器 |
 | `--force` | 关 | 忽略分块缓存 |
 | `-y` | 关 | 不询问直接跑 |
 | `--ping/--no-ping` | 开 | doctor 是否实测额度 |
@@ -244,7 +264,7 @@ cat out/<id>/transcript.md
 | `HF_ENDPOINT` | 等价于 `--hf-mirror` |
 | `VLEARN_MODEL` | 等价于 `--model` 的默认值 |
 
-### 3.4 输出怎么读
+### 3.5 输出怎么读
 
 ```
 out/<视频id>/
@@ -258,7 +278,7 @@ out/<视频id>/
 - `meta.json` 的 `subtitle` 字段告诉你用的是人工字幕、自动字幕还是语音转写——**可信度不同**；
 - 想复用中间结果改文案，直接编辑 `chunks/*.md` 再手工合并即可。
 
-### 3.5 缓存与续跑
+### 3.6 缓存与续跑
 
 缓存键 = 块内容的 sha1。所以：
 
@@ -281,7 +301,7 @@ out/<视频id>/
 python3 -m unittest discover -s tests -v
 ```
 
-期望：`Ran 44 tests ... OK`
+期望：`Ran 48 tests ... OK`
 
 覆盖范围：
 
@@ -365,6 +385,18 @@ python3 vlearn.py sub /tmp/t.wav --asr-model tiny --asr-language en
 
 > 这个用例是最稳的回归方式：不碰 YouTube 反爬、不碰 B 站风控，只测本机链路。
 
+**T5 · 网页界面冒烟（不消耗额度）**
+
+```bash
+python3 vlearn.py web --port 8901 --no-open
+# 另一个终端：
+curl -s -X POST localhost:8901/api/start -H 'Content-Type: application/json' \
+     -d '{"target":"/不存在.mp4"}' | python3 -c "import sys,json;print(json.load(sys.stdin)['job'])"
+curl -sN "localhost:8901/api/stream?job=<上一步的 job>"
+```
+
+验收：SSE 里能看到 `✗ 既不是链接也不是存在的文件…`，并以 `event: done` 收尾。
+
 **T4 · 额度失效的诊断（选做，验证报错质量）**
 
 把 `opencode auth login` 换成一个过期 key 后跑任意视频，应看到：
@@ -381,7 +413,7 @@ python3 vlearn.py sub /tmp/t.wav --asr-model tiny --asr-language en
 
 发版前逐项打钩：
 
-- [ ] `python3 -m unittest discover -s tests` → 44 passed
+- [ ] `python3 -m unittest discover -s tests` → 48 passed
 - [ ] `python3 vlearn.py doctor` → 退出码 0 且 `✓ 额度可用`
 - [ ] T1 有字幕视频出成品，时间戳不超时长
 - [ ] T2 分块 + 合并成功，`chunks/` 有 2 个文件
@@ -413,7 +445,10 @@ make check   # 单测 + doctor（会消耗 1 次请求）
 | `拿不到 B 站字幕` | 匿名 ↑ 或该视频没开 CC/AI 字幕 | 带登录态重试；否则只能 `--asr` |
 | `Requested format is not available` / PO Token | YouTube 音轨下载受限 | 加 `--cookie-browser`，或改用本地文件 |
 | `没有可用的语音识别引擎` | 没装 faster-whisper | `.venv/bin/pip install faster-whisper` |
-| 模型下载卡住 | HuggingFace 慢 | `--hf-mirror https://hf-mirror.com` |
+| 模型下载卡住 | HuggingFace 慢/被墙 | 加 `--hf-mirror https://hf-mirror.com` |
+| `FileMetadataError: Distant resource does not seem to be on huggingface.co` | Hub 的 Xet 校验在镜像上失败 | 加 `--hf-mirror`（代码会改用直连 GET，跳过 Hub 协议） |
+| `LocalEntryNotFoundError` | 同上，HEAD 请求失败 | 同上 |
+| 想完全避开 Hub | — | 用 `--asr-model /本地模型目录`，或 `VLEARN_MODEL_DIR` 指定缓存位置 |
 | `超时（>600s）` | 长视频 + 大模型 | 加 `--timeout 1800`，或换 `--asr-model small` |
 | 转写字数明显偏少 | 视频确实没字幕/没音轨 | `python3 vlearn.py sub …` 先看 `transcript.md` |
 

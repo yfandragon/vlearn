@@ -324,5 +324,52 @@ class TestCliSmoke(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
 
 
+class TestWebUI(unittest.TestCase):
+    """Web 层只是 CLI 的壳，这里只测不联网的部分。"""
+
+    def setUp(self):
+        import webui
+        self.webui = webui
+
+    def test_cmd_minimal(self):
+        job = self.webui.Job("BV1xx411c7mD", {"asr": True})
+        cmd = job.cmd()
+        self.assertEqual(cmd[2], "BV1xx411c7mD")
+        self.assertIn("-y", cmd)
+        self.assertIn("--out", cmd)
+        self.assertNotIn("--asr", cmd)          # 默认开，不用显式传
+        self.assertNotIn("--cookie-browser", cmd)
+
+    def test_cmd_passes_options(self):
+        job = self.webui.Job("x", {
+            "backend": "codex", "model": "m/x", "max_chars": 3000,
+            "asr": False, "asr_model": "base", "mirror": True,
+            "sessdata": "abc123", "cookie_browser": "safari",
+        })
+        cmd = " ".join(job.cmd())
+        for expect in ("--backend codex", "--model m/x", "--max-chars 3000",
+                       "--asr none", "--asr-model base", "--hf-mirror",
+                       "--bili-sessdata abc123", "--cookie-browser safari"):
+            self.assertIn(expect, cmd)
+
+    def test_cookie_none_skipped(self):
+        job = self.webui.Job("x", {"cookie_browser": "none"})
+        self.assertNotIn("--cookie-browser", " ".join(job.cmd()))
+
+    def test_result_finds_nested_notes(self):
+        import tempfile
+        job = self.webui.Job("x", {})
+        job.out_dir = Path(tempfile.mkdtemp())
+        self.assertIsNone(job.find_notes())
+        nested = job.out_dir / "local-abc"
+        nested.mkdir()
+        (nested / "notes.md").write_text("# 标题\n", encoding="utf-8")
+        (nested / "meta.json").write_text('{"chunks": 1}', encoding="utf-8")
+        data = job.result()
+        self.assertEqual(Path(data["out_dir"]), nested)
+        self.assertIn("# 标题", data["notes"])
+        self.assertEqual(data["meta"]["chunks"], 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

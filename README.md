@@ -66,6 +66,15 @@ python3 vlearn.py "https://www.youtube.com/watch?v=aircAruvnKk"
 
 脚本会自动切到项目里的 `.venv`，所以你用系统 `python3` 调用也没关系。
 
+### 不想用命令行？有网页界面
+
+```bash
+python3 vlearn.py web
+```
+
+会起一个本地服务（默认 <http://127.0.0.1:8765>）并自动打开浏览器：粘贴链接、点开始、
+实时看日志、完成后直接渲染出笔记。界面只是 CLI 的壳，命令行能跑通的它都能跑。
+
 ### 额度怎么配
 
 默认走 **opencode Go**（订阅制，按次计费，不产生 API 账单）：
@@ -104,7 +113,9 @@ python3 vlearn.py "URL" --asr faster-whisper --asr-language zh
 | `--asr-model` | faster-whisper 的 `tiny`~`large-v3`，或 whisper.cpp 的 ggml 路径 |
 | `--asr-language` | `auto` / `zh` / `en` … |
 | `--hf-mirror` | 模型下载慢时用 `https://hf-mirror.com` |
-| `--cookie-browser` | `safari` / `chrome` / `edge`，需要登录态的视频 |
+| `--cookie-browser` | `safari` / `chrome` / `edge` / `auto`，需要登录态的视频 |
+| `--bili-sessdata` | 直接填 B 站 SESSDATA，**不需要给终端任何系统权限** |
+| `--hf-mirror` | 模型下载走镜像站，国内网络建议加 |
 | `--force` | 忽略缓存重跑 |
 | `-y` | 不询问直接开跑 |
 
@@ -130,6 +141,8 @@ out/<视频id>/
 
 ## 已知限制
 
+- **模型下载**：`faster-whisper` 默认走 HuggingFace Hub。国内网络建议
+  `--hf-mirror https://hf-mirror.com`（会自动改用直连下载，绕过 Hub 的 Xet 校验）。
 - **音轨下载依赖 yt-dlp 的反爬状态**。YouTube 现在对部分客户端要求 PO Token，
   纯字幕路径不受影响；要走语音识别时如果下载失败，加 `--cookie-browser` 通常能解决。
 - **B 站有两条通道**：优先走开放 API（元数据 + playurl 音轨），失败时回退 yt-dlp。
@@ -142,7 +155,7 @@ out/<视频id>/
 ## 开发
 
 ```bash
-python3 -m unittest discover -s tests -v    # 44 个离线单测，不联网、不调用模型
+python3 -m unittest discover -s tests -v    # 48 个离线单测，不联网、不调用模型
 ```
 
 结构：单文件 `vlearn.py`（约 1200 行）+ `tests/` + `docs/`。改代码前先看
