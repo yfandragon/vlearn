@@ -1009,6 +1009,12 @@ def write_transcript(path: Path, meta: dict, paras, subtitle_note: str):
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def cache_key(body: str, args) -> str:
+    """缓存键要带后端和模型：换了模型不该复用旧模型的笔记。"""
+    tag = f"{getattr(args, 'backend', 'opencode')}|{getattr(args, 'model', '')}"
+    return hashlib.sha1(f"{tag}\n{body}".encode()).hexdigest()[:10]
+
+
 def run_summarize(url: str, args) -> Path:
     meta, paras, sub_note, vid = prepare(url, args)
     title = meta.get("title") or "未命名视频"
@@ -1032,7 +1038,7 @@ def run_summarize(url: str, args) -> Path:
 
     if len(blocks) == 1:
         body = "\n".join(f"[{ts(s)}] {t}" for s, _e, t in blocks[0])
-        digest = hashlib.sha1(body.encode()).hexdigest()[:10]
+        digest = cache_key(body, args)
         cache = chunks_dir / f"final-{digest}.md"
         if cache.exists() and not args.force:
             info("  · 命中缓存（整篇）")
@@ -1045,7 +1051,7 @@ def run_summarize(url: str, args) -> Path:
         notes: list[str] = []
         for i, block in enumerate(blocks, 1):
             body = "\n".join(f"[{ts(s)}] {t}" for s, _e, t in block)
-            digest = hashlib.sha1(body.encode()).hexdigest()[:10]
+            digest = cache_key(body, args)
             cache = chunks_dir / f"{i:02d}-{digest}.md"
             if cache.exists() and not args.force:
                 info(f"  [{i}/{len(blocks)}] 命中缓存")
