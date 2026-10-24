@@ -152,6 +152,15 @@ out/<视频id>/
 
 排错对照表在 [docs/HANDBOOK.md](docs/HANDBOOK.md#四排错对照表)。
 
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| [docs/HANDBOOK.md](docs/HANDBOOK.md) | 部署、使用、测试、排错对照表 |
+| [docs/OPTIONS.md](docs/OPTIONS.md) | 每个参数什么意思、什么情况该加哪个 |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 项目讲解：用了什么技术、怎么实现的（面向非技术读者） |
+| [docs/PUBLISH.md](docs/PUBLISH.md) | 发布到 GitHub 的完整步骤 |
+
 ## 开发
 
 ```bash

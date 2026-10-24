@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vlearn"
-version = "0.4.0"
+version = "0.4.1"
 description = "把视频链接或本地文件变成带时间戳的中文笔记，用 opencode Go / Codex 的订阅额度做总结"
 readme = "README.md"
 requires-python = ">=3.9"

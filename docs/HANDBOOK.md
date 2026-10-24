@@ -1,6 +1,8 @@
 # vlearn 手册
 
 > 部署 · 使用 · 测试。全部命令都在 macOS (Apple Silicon, Python 3.9) 上实测过；
+>
+> 另外三份文档：[选项详解](OPTIONS.md)（该加哪个参数）、[项目讲解](ARCHITECTURE.md)（不懂技术也能看懂）、[发布到 GitHub](PUBLISH.md)。
 > 标注「未验证」的地方是环境限制导致的，不是没实现。
 
 ---
@@ -54,6 +56,16 @@ opencode Go 是订阅制：按请求次数计入订阅，不产生 API 账单。
 ---
 
 ## 二、部署手册
+
+### 2.0 三种安装方式，选一个
+
+| 方式 | 适合谁 | 优点 | 缺点 |
+|---|---|---|---|
+| **源码 + venv**（推荐） | 要想改代码、看日志 | 所有文件都在你眼前，改完立刻生效 | 要敲几条命令 |
+| **pipx 安装** | 只想当个命令用 | `vlearn` 全局可用，像系统命令 | 改代码要重装 |
+| **直接下载单文件** | 只想试试 | 一个文件就能跑 | 没有 `.venv` 自动切换，要自己装依赖 |
+
+下面的流程按「源码 + venv」写。其他两种在 2.2 末尾。
 
 ### 2.1 环境要求
 
@@ -114,7 +126,29 @@ codex login status      # 确认 Logged in using ChatGPT
 python3 vlearn.py doctor --backend codex
 ```
 
-### 2.5 部署验收
+### 2.5 升级、卸载、换机器
+
+**升级**（拉最新代码，依赖一般不用重装）：
+
+```bash
+git pull
+.venv/bin/pip install -U yt-dlp        # 抓取规则更新很勤，值得定期升级
+python3 vlearn.py --version            # 确认版本号变了
+python3 -m unittest discover -s tests  # 升级后先跑测试
+```
+
+**卸载**：
+
+```bash
+rm -rf .venv out            # 依赖和产物
+# 模型缓存（占空间最大，通常 0.5~3GB）
+rm -rf ~/.cache/vlearn/models ~/.cache/huggingface/hub/models--Systran--faster-whisper-*
+```
+
+**换机器**：只需要带三样东西——仓库代码、`.venv`（可不带，重装即可）、额度配置（`opencode auth login` 重做一次）。
+`out/` 和模型缓存都不用带。
+
+### 2.6 部署验收
 
 ```bash
 python3 vlearn.py doctor
@@ -334,7 +368,7 @@ python3 vlearn.py doctor > /tmp/d.log 2>&1; echo "exit=$?"
 grep -q "✓ 额度可用" /tmp/d.log && echo "额度 OK"
 ```
 
-### 4.3 第三层：端到端（三个用例）
+### 4.3 第三层：端到端用例（T1–T5）
 
 **T1 · 有字幕的长视频（验证分块/成稿）**
 
@@ -455,6 +489,9 @@ make check   # 单测 + doctor（会消耗 1 次请求）
 ---
 
 ## 六、发布到 GitHub
+
+> 从零开始的完整版（含起名规则、授权、发布后设置）见 **[PUBLISH.md](PUBLISH.md)**。
+> 下面是已经配好 `gh` 之后的快捷流程。
 
 ```bash
 git init
