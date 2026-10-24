@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vlearn"
+version = "0.2.0"
+description = "把视频链接或本地文件变成带时间戳的中文笔记，用 opencode Go / Codex 的订阅额度做总结"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "duanyifan" }]
+keywords = ["video", "summary", "notes", "subtitle", "whisper", "opencode", "codex", "llm"]
+classifiers = [
+    "Environment :: Console",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Text Processing :: Linguistic",
+]
+dependencies = ["yt-dlp>=2024.1.1"]
+
+[project.optional-dependencies]
+asr = ["faster-whisper>=1.0"]
+
+[project.scripts]
+vlearn = "vlearn:main"
+
+[project.urls]
+Homepage = "https://github.com/duanyifan/vlearn"
+
+[tool.setuptools]
+py-modules = ["vlearn"]

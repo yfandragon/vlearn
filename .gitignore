@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# 运行产物
+out/
+videonotes/out/
+.tmp/
+.hf/
+
+# 本机配置
+.env
+.DS_Store
