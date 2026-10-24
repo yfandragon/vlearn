@@ -262,6 +262,28 @@ class TestLocalMedia(unittest.TestCase):
         self.assertFalse(v.is_url("/abs/x.mp4"))
 
 
+class TestNormalizeTarget(unittest.TestCase):
+    def test_bare_bv(self):
+        self.assertEqual(v.normalize_target("BV1hVnh64Ere"),
+                         "https://www.bilibili.com/video/BV1hVnh64Ere")
+
+    def test_bare_av(self):
+        self.assertEqual(v.normalize_target("av80433022"),
+                         "https://www.bilibili.com/video/av80433022")
+
+    def test_passthrough(self):
+        url = "https://www.bilibili.com/video/BV1hVnh64Ere"
+        self.assertEqual(v.normalize_target(url), url)
+        self.assertEqual(v.normalize_target("./x.mp4"), "./x.mp4")
+
+    def test_strips_whitespace(self):
+        self.assertEqual(v.normalize_target("  BV1hVnh64Ere  "),
+                         "https://www.bilibili.com/video/BV1hVnh64Ere")
+
+    def test_not_a_bv(self):
+        self.assertEqual(v.normalize_target("BV123"), "BV123")
+
+
 class TestSubtitlePicking(unittest.TestCase):
     def test_prefers_manual_chinese(self):
         meta = {"subtitles": {"zh-Hans": [{"ext": "vtt", "url": "u1"}]},

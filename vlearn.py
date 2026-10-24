@@ -25,7 +25,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 HERE = Path(__file__).resolve().parent
 UA = (
@@ -265,9 +265,10 @@ def bili_subtitle_cues(cid: int, bvid: str, cookies: dict):
 
 
 def bili_prepare(url: str, cookie_browser: str | None):
+    """返回 (meta, cues, note, cid)；拿不到字幕时 cues 为 None。"""
     bvid = bili_bvid(url)
     if not bvid:
-        return None, None, "解析不出 BV 号"
+        return None, None, "解析不出 BV 号", None
     cookies = bili_cookies(cookie_browser)
     view = bili_api("/x/web-interface/view", {"bvid": bvid}, cookies)
     meta = {
@@ -284,8 +285,8 @@ def bili_prepare(url: str, cookie_browser: str | None):
     if not cues:
         hint = ("未登录只能拿到空字幕列表，解法：加 --cookie-browser safari（或 chrome）"
                 if not cookies else "登录态里这个视频也没有可用字幕（UP 主没开 CC/AI 字幕）")
-        return meta, None, hint
-    return meta, cues, f"B站字幕（{lan or 'zh'}）"
+        return meta, None, hint, cid
+    return meta, cues, f"B站字幕（{lan or 'zh'}）", cid
 
 
 # --------------------------------------------------------------------------
@@ -701,6 +702,21 @@ def is_url(target: str) -> bool:
     return bool(re.match(r"^https?://", target))
 
 
+BV_ONLY = re.compile(r"^BV[0-9A-Za-z]{10}$")
+AV_ONLY = re.compile(r"^av(\d+)$", re.I)
+
+
+def normalize_target(target: str) -> str:
+    """允许直接粘贴 BV 号 / av 号，自动补成 B 站链接。"""
+    t = target.strip()
+    if BV_ONLY.match(t):
+        return f"https://www.bilibili.com/video/{t}"
+    m = AV_ONLY.match(t)
+    if m:
+        return f"https://www.bilibili.com/video/av{m.group(1)}"
+    return target
+
+
 def local_media(target: str) -> Path | None:
     p = Path(target).expanduser()
     return p if p.is_file() else None
@@ -832,6 +848,38 @@ def transcribe_whisper_cpp(path: Path, args) -> tuple[list, str]:
     return cues, "语音转写（whisper.cpp）"
 
 
+def bili_audio_urls(bvid: str, cid: int, cookies: dict) -> list[dict]:
+    """走 playurl 接口拿 DASH 音频流（yt-dlp 的网页端常被 412）。"""
+    data = bili_api("/x/player/playurl",
+                    {"bvid": bvid, "cid": cid, "fnval": 16, "fourk": 1}, cookies)
+    audios = (data.get("dash") or {}).get("audio") or []
+    audios = [a for a in audios if a.get("baseUrl") or a.get("base_url")]
+    audios.sort(key=lambda a: a.get("bandwidth") or 0, reverse=True)
+    return audios
+
+
+def bili_download_audio(bvid: str, cid: int, cookie_browser: str | None,
+                        outdir: Path) -> Path:
+    cookies = bili_cookies(cookie_browser)
+    audios = bili_audio_urls(bvid, cid, cookies)
+    if not audios:
+        raise RuntimeError("playurl 没有返回音频流")
+    best = audios[0]
+    url = best.get("baseUrl") or best.get("base_url")
+    outdir.mkdir(parents=True, exist_ok=True)
+    dest = outdir / "audio.m4a"
+    headers = {"User-Agent": BILI_UA, "Referer": f"https://www.bilibili.com/video/{bvid}"}
+    if cookies:
+        headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
+    info(f"  API 音轨 {best.get('id')} · {int((best.get('bandwidth') or 0) / 1000)} kbps")
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=120) as resp, open(dest, "wb") as fh:
+        shutil.copyfileobj(resp, fh)
+    if dest.stat().st_size < 10_000:
+        raise RuntimeError(f"音轨文件过小（{dest.stat().st_size} 字节）")
+    return dest
+
+
 def ytdlp_extra_args(url: str) -> list[str]:
     if "youtube.com" in url or "youtu.be" in url:
         return ["--extractor-args", "youtube:player_client=android"]
@@ -864,6 +912,7 @@ def download_audio(url: str, outdir: Path, cookie_browser: str | None) -> Path:
 
 def prepare(target: str, args) -> tuple[dict, list, str, str]:
     """拿到 (meta, 段落, 来源说明, 视频 id)：字幕优先，字幕缺失时走语音识别。"""
+    target = normalize_target(target)
     local = local_media(target)
     if local:
         meta = media_meta(local)
@@ -882,26 +931,37 @@ def prepare(target: str, args) -> tuple[dict, list, str, str]:
     info("· 读取视频信息 …")
 
     if is_bilibili(target):
-        meta, cues, note = bili_prepare(target, args.cookie_browser)
-        if meta is None:
-            die(f"B 站链接解析失败：{note}")
-        vid = str(meta["id"])
-        info(f"  {meta['title']}")
-        if meta.get("duration"):
-            info(f"  时长 {ts(int(meta['duration']) * 1000)} · 平台 BiliBili(API)")
-        if cues is None:
-            if args.asr == "none":
-                die(f"拿不到 B 站字幕：{note}\n"
-                    "  加 --cookie-browser safari / chrome 传登录态后重试。")
-            info(f"· 字幕不可用（{note}），改用语音识别 …")
-            audio = download_audio(target, Path(args.out).expanduser() / "_audio" / vid,
-                                   args.cookie_browser)
-            cues, note = transcribe(audio, args)
-        else:
-            info(f"· 字幕：{note}")
-        paras = to_paragraphs(cues)
-        info(f"  {len(cues)} 条 → {len(paras)} 个段落")
-        return meta, paras, note, vid
+        meta = cues = cid = None
+        note = ""
+        try:
+            meta, cues, note, cid = bili_prepare(target, args.cookie_browser)
+        except Exception as exc:
+            info(f"· B 站 API 不可用（{exc}），改用 yt-dlp 处理")
+
+        if meta is not None:
+            vid = str(meta["id"])
+            info(f"  {meta['title']}")
+            if meta.get("duration"):
+                info(f"  时长 {ts(int(meta['duration']) * 1000)} · 平台 BiliBili(API)")
+            if cues is None:
+                if args.asr == "none":
+                    die(f"拿不到 B 站字幕：{note}\n"
+                        "  加 --cookie-browser safari / chrome 传登录态后重试。")
+                info(f"· 字幕不可用（{note}），改用语音识别 …")
+                audio_dir = Path(args.out).expanduser() / "_audio" / vid
+                try:
+                    audio = bili_download_audio(vid, cid, args.cookie_browser, audio_dir)
+                except Exception as exc:
+                    info(f"  · API 取音轨失败（{exc}），改用 yt-dlp")
+                    audio = download_audio(target, audio_dir, args.cookie_browser)
+                cues, note = transcribe(audio, args)
+            else:
+                info(f"· 字幕：{note}")
+            paras = to_paragraphs(cues)
+            info(f"  {len(cues)} 条 → {len(paras)} 个段落")
+            return meta, paras, note, vid
+
+        info("· 改走 yt-dlp 通用路径")
 
     meta = fetch_meta(target, args.cookie_browser)
     title = meta.get("title") or "未命名视频"
@@ -1144,6 +1204,7 @@ def main(argv=None) -> int:
         if not url:
             ap.error("用法：vlearn.py sub <链接或本地文件>")
         return cmd_sub(url, args)
+    args.target = normalize_target(args.target)
     if not is_url(args.target) and not local_media(args.target):
         ap.error(f"既不是链接也不是存在的文件：{args.target}"
                  "（要视频链接 / 本地文件 / doctor / sub）")

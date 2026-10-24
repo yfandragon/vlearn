@@ -186,11 +186,19 @@ python3 vlearn.py "URL"
 **场景 3：B 站**
 
 ```bash
-python3 vlearn.py "https://www.bilibili.com/video/BV1xx411c7mD" --cookie-browser safari
+python3 vlearn.py BV1xx411c7mD --cookie-browser safari   # BV 号可直接粘
 ```
 
-B 站网页端会返回 `412 Precondition Failed`，所以元数据走开放 API；但**字幕列表匿名是空的**，
-必须带登录态。`--cookie-browser` 的值就是你的浏览器名：`safari` / `chrome` / `edge`。
+B 站网页端会返回 `412 Precondition Failed`，所以走**双通道**：
+
+| 环节 | 首选 | 回退 |
+|---|---|---|
+| 元数据 | `api.bilibili.com/x/web-interface/view` | yt-dlp |
+| 字幕 | `x/player/v2` → `subtitle_url`（**需登录态**） | — |
+| 音轨 | `x/player/playurl` → DASH 音频（**匿名可用**） | yt-dlp `bestaudio` |
+
+实测：匿名状态下 `BV1hVnh64Ere` 能拿到 168 kbps 音轨并完整转写 4 分 39 秒。
+想免掉语音识别、直接用官方字幕，再带 `--cookie-browser`。
 
 **场景 4：本地视频 / 音频**
 
@@ -272,7 +280,7 @@ out/<视频id>/
 python3 -m unittest discover -s tests -v
 ```
 
-期望：`Ran 39 tests ... OK`
+期望：`Ran 44 tests ... OK`
 
 覆盖范围：
 
@@ -372,7 +380,7 @@ python3 vlearn.py sub /tmp/t.wav --asr-model tiny --asr-language en
 
 发版前逐项打钩：
 
-- [ ] `python3 -m unittest discover -s tests` → 39 passed
+- [ ] `python3 -m unittest discover -s tests` → 44 passed
 - [ ] `python3 vlearn.py doctor` → 退出码 0 且 `✓ 额度可用`
 - [ ] T1 有字幕视频出成品，时间戳不超时长
 - [ ] T2 分块 + 合并成功，`chunks/` 有 2 个文件
@@ -399,7 +407,8 @@ make check   # 单测 + doctor（会消耗 1 次请求）
 | `api_key_expired` / `401` | Go 的 key 过期 | 控制台新建 key → `opencode auth login -p opencode-go` |
 | `region` / `privacy` 报错 | Go 对 DeepSeek 有地区开关 | Settings › Privacy → DeepSeek → Region: Global |
 | `The page needs to be reloaded` | YouTube 反爬 | 脚本会自动回退 android 客户端；仍失败就加 `--cookie-browser` |
-| `412 Precondition Failed` | B 站网页端风控 | 会自动走 API；字幕仍需 `--cookie-browser` |
+| `412 Precondition Failed` | B 站网页端风控 | 元数据和音轨会自动走 API；只在 yt-dlp 回退时才会看到 |
+| `拿不到 B 站字幕` | 字幕列表需要登录态 | 自动化会降级到语音识别；想用官方字幕就带 `--cookie-browser` |
 | `拿不到 B 站字幕` | 匿名 ↑ 或该视频没开 CC/AI 字幕 | 带登录态重试；否则只能 `--asr` |
 | `Requested format is not available` / PO Token | YouTube 音轨下载受限 | 加 `--cookie-browser`，或改用本地文件 |
 | `没有可用的语音识别引擎` | 没装 faster-whisper | `.venv/bin/pip install faster-whisper` |

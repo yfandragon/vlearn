@@ -88,8 +88,8 @@ python3 vlearn.py sub "URL 或 本地文件"
 # 本地视频 / 音频（自动跑语音识别）
 python3 vlearn.py ~/Movies/课程.mp4 --asr-model small
 
-# B 站：网页端有风控，走 API，字幕需要登录态
-python3 vlearn.py "https://www.bilibili.com/video/BV1xx411c7mD" --cookie-browser safari
+# B 站：BV 号可以直接粘，不用拼完整链接
+python3 vlearn.py BV1xx411c7mD --cookie-browser safari
 
 # 抖音式超短视频也有 AI 字幕拿不到的时候，强制语音识别
 python3 vlearn.py "URL" --asr faster-whisper --asr-language zh
@@ -132,7 +132,8 @@ out/<视频id>/
 
 - **音轨下载依赖 yt-dlp 的反爬状态**。YouTube 现在对部分客户端要求 PO Token，
   纯字幕路径不受影响；要走语音识别时如果下载失败，加 `--cookie-browser` 通常能解决。
-- **B 站字幕需要登录态**：匿名只能拿到视频信息，字幕列表为空。
+- **B 站有两条通道**：优先走开放 API（元数据 + playurl 音轨），失败时回退 yt-dlp。
+  字幕仍然需要登录态；没有字幕时会自动用 API 拉音轨做语音识别（**这条匿名也能跑通**）。
 - **whisper.cpp 后端需要系统 ffmpeg**（faster-whisper 不需要）。
 - **串行调用**：别并发，容易触发限流。
 
@@ -141,7 +142,7 @@ out/<视频id>/
 ## 开发
 
 ```bash
-python3 -m unittest discover -s tests -v    # 39 个离线单测，不联网、不调用模型
+python3 -m unittest discover -s tests -v    # 44 个离线单测，不联网、不调用模型
 ```
 
 结构：单文件 `vlearn.py`（约 1200 行）+ `tests/` + `docs/`。改代码前先看
