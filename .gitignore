@@ -16,3 +16,5 @@ videonotes/out/
 # 本机配置
 .env
 .DS_Store
+.models/
+models/
