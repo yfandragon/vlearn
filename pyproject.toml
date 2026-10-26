@@ -9,7 +9,7 @@ description = "把视频链接或本地文件变成带时间戳的中文笔记�
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
-authors = [{ name = "duanyifan" }]
+authors = [{ name = "yfandragon" }]
 keywords = ["video", "summary", "notes", "subtitle", "whisper", "opencode", "codex", "llm"]
 classifiers = [
     "Environment :: Console",
@@ -30,7 +30,8 @@ asr = ["faster-whisper>=1.0"]
 vlearn = "vlearn:main"
 
 [project.urls]
-Homepage = "https://github.com/duanyifan/vlearn"
+Homepage = "https://github.com/yfandragon/vlearn"
+Repository = "https://github.com/yfandragon/vlearn"
 
 [tool.setuptools]
 py-modules = ["vlearn", "webui"]

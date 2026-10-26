@@ -98,8 +98,8 @@ python3 -m venv .venv
 ### 2.3 安装（作为命令，可选）
 
 ```bash
-pipx install "git+https://github.com/<你>/vlearn.git"           # 只要字幕/总结
-pipx install "git+https://github.com/<你>/vlearn.git[asr]"      # 带语音识别
+pipx install "git+https://github.com/yfandragon/vlearn.git"           # 只要字幕/总结
+pipx install "git+https://github.com/yfandragon/vlearn.git[asr]"      # 带语音识别
 vlearn doctor
 ```
 
@@ -499,7 +499,8 @@ git add .
 git commit -m "feat: vlearn 0.2.0 —— 视频转带时间戳笔记（opencode Go / Codex 额度）"
 
 # 新建空仓库后
-git remote add origin git@github.com:<你>/vlearn.git
+gh repo create vlearn --public --source=. --remote=origin --push
+# 或者手动：git remote add origin git@github.com:yfandragon/vlearn.git
 git branch -M main
 git push -u origin main
 
