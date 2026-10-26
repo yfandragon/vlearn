@@ -181,7 +181,28 @@ git ls-files | grep -iE "auth|cookie|secret|\.env|token"
 其他检查：
 
 - [ ] `.gitignore` 里有 `out/`、`.venv/`、`.hf/`、`__pycache__/`（已配好）
-- [ ] 没有提交超过 50MB 的文件：`git ls-files -s | ...` 或直接看仓库大小
+- [ ] 没有提交大文件（GitHub 单文件上限 **100MB**，超了 push 会被拒）：
+
+```bash
+# 列出被跟踪文件里最大的 5 个
+git ls-files | xargs -I{} du -k {} 2>/dev/null | sort -rn | head -5
+# 看整个仓库体积（含历史）
+git count-objects -vH
+```
+
+常见踩坑：模型缓存（`.models/`、`~/.cache/huggingface`）、下载的视频、`.venv`。
+如果已经被提交但**还没 push**，可以改写历史去掉它：
+
+```bash
+FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch --force \
+  --index-filter 'git rm -r --cached --ignore-unmatch .models' \
+  --prune-empty --tag-name-filter cat -- --all
+rm -rf .git/refs/original
+git reflog expire --expire=now --all && git gc --prune=now
+```
+
+然后把它加进 `.gitignore` 再提交。**如果已经 push 过，就必须强制推并且所有协作者重新 clone**——
+所以最好的办法是 `git add` 之前先 `git status` 看一眼。
 - [ ] README 里没有你的私人路径（`/Users/duanyifan/...`）
 - [ ] `meta.json` 里没有敏感信息（现在只有标题/作者/时长）
 
